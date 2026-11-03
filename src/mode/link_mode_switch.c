@@ -1,5 +1,4 @@
- * Runtime selector for the BLE and runtime ESB split transports.
- */
+ // Runtime selector for the BLE and runtime ESB split transports.
 #if defined(CONFIG_ZMK_NEMU_LINK_STUDIO_SYNC)
 #include <zmk/nemu_link/studio_zmk.h>
 #endif
