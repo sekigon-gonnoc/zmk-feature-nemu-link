@@ -9,9 +9,9 @@
 #define NEMU_LINK_KEY_RECORD_VERSION 1U
 #define NEMU_LINK_RADIO_CHANNEL_MAX 80U
 #define NEMU_LINK_RADIO_CHANNEL_COUNT_MAX 3U
-#define NEMU_LINK_DEFAULT_RADIO_CHANNEL_COUNT 3U
+#define NEMU_LINK_DEFAULT_RADIO_CHANNEL_COUNT 1U
 #define NEMU_LINK_DEFAULT_RADIO_CHANNELS                                                           \
-    { 48U, 76U, 24U }
+    { 48U, 0U, 0U }
 
 /* The unreleased format v1 stores magic/version/length/count/channels/key/address/CRC.
  * The address and channels are public radio metadata, not secrets. Other versions are rejected.
