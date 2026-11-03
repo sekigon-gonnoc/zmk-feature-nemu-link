@@ -1,0 +1,15 @@
+#include <settings/nemu-link-shared-diagnostics.dtsi>
+
+/ {
+    NEMU_LINK_STUDIO_SHARED_DIAGNOSTICS(nemu_link_diagnostics)
+};
+
+/ {
+    behaviors {
+        /* BLE split RUN behavior names have room for 8 characters plus NUL. */
+        nl_mode: nl_mode {
+            compatible = "zmk,behavior-nemu-link-mode";
+            #binding-cells = <1>;
+        };
+    };
+};

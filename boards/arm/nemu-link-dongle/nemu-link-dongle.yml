@@ -1,0 +1,11 @@
+identifier: nemu-link-dongle
+name: Nemu-link Dongle
+type: mcu
+arch: arm
+toolchain:
+  - zephyr
+  - gnuarmemb
+supported:
+  - gpio
+  - usb_device
+  - watchdog

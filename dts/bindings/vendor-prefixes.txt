@@ -1,0 +1,3 @@
+# Device tree vendor prefix used by the nemu-link module.
+sekigon	Sekigon
+nemu-link	nemu-link

@@ -1,0 +1,12 @@
+
+config BOARD_NEMU_LINK_DONGLE
+    select SOC_NRF52833_QIAA
+    select ZMK_SPLIT if !ZMK_BLE
+    select ZMK_SPLIT_ROLE_CENTRAL if !ZMK_BLE
+    select ZMK_NEMU_LINK if !ZMK_BLE
+    select ZMK_USB
+    select SETTINGS
+    select MBEDTLS
+    select MBEDTLS_PSA_CRYPTO_C
+    imply ZMK_MOUSE
+    imply ZMK_INPUT_SPLIT

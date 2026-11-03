@@ -1,0 +1,232 @@
+
+#ifndef NEMU_LINK_STUDIO_SHARED_DIAGNOSTICS_DTSI
+#define NEMU_LINK_STUDIO_SHARED_DIAGNOSTICS_DTSI
+
+#define NEMU_LINK_STUDIO_DIAGNOSTIC_BOOL(arg_node, arg_name, arg_label, arg_help) \
+  arg_node {                                                                  \
+    compatible = "sekigon,dynamic-setting";                                             \
+    setting-name = arg_name;                                                 \
+    label = arg_label;                                                       \
+    help = arg_help;                                                         \
+    value-type = "bool";                                                    \
+    default-bool = <0>;                                                      \
+    read-only;                                                               \
+  };
+
+#define NEMU_LINK_STUDIO_DIAGNOSTIC_U32(arg_node, arg_name, arg_label, arg_help) \
+  arg_node {                                                                 \
+    compatible = "sekigon,dynamic-setting";                                            \
+    setting-name = arg_name;                                                \
+    label = arg_label;                                                      \
+    help = arg_help;                                                        \
+    value-type = "u32";                                                    \
+    default-int = <0>;                                                      \
+    minimum = <0>;                                                          \
+    maximum = <4294967295>;                                                \
+    step = <1>;                                                             \
+    read-only;                                                              \
+  };
+
+#define NEMU_LINK_STUDIO_DIAGNOSTIC_S16(arg_node, arg_name, arg_label, arg_help) \
+  arg_node {                                                                 \
+    compatible = "sekigon,dynamic-setting";                                \
+    setting-name = arg_name;                                                \
+    label = arg_label;                                                      \
+    help = arg_help;                                                        \
+    value-type = "s16";                                                     \
+    default-int = <(-128)>;                                                 \
+    minimum = <(-128)>;                                                     \
+    maximum = <0>;                                                          \
+    step = <1>;                                                             \
+    unit = "dBm";                                                          \
+    read-only;                                                              \
+  };
+
+#define NEMU_LINK_STUDIO_SHARED_DIAGNOSTICS(arg_group_node) \
+  arg_group_node: arg_group_node {                                           \
+    compatible = "sekigon,dynamic-settings-group";                                    \
+    module-name = "nemu-link";                                             \
+    group-name = "shared-diagnostics";                                    \
+    instance-name = "link";                                                \
+    label = "Nemu-link Shared Settings Diagnostics";                             \
+    scope = "local";                                                       \
+    kconfig-condition = "CONFIG_ZMK_NEMU_LINK_STUDIO_SHARED_SETTINGS";      \
+    format-version = <1>;                                                   \
+    target-role = "nemu-link";                                            \
+    default-provider-context-free;                                          \
+    default-provider = "nemu_link_studio_settings_diagnostic_default";           \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_BOOL(ready, "ready", "Ready",                 \
+      "Shared settings metadata has loaded.")                              \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_BOOL(synchronized, "synchronized",               \
+      "Synchronized", "Shared settings match the peer revision.")         \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_BOOL(save_pending, "save-pending",                \
+      "Save pending", "A local shared settings change awaits synchronization.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_BOOL(receive_active, "receive-active",            \
+      "Receive active", "A shared settings transfer is being received.")  \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_BOOL(contract_matches, "contract-matches",        \
+      "Shared contract matches", "The live contract hash matches this firmware.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_BOOL(peer_shared_contract_known, "peer-shared-contract-known", \
+      "Peer shared contract known", "The peer shared settings contract hash has been received.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_BOOL(peer_shared_contract_matches, "peer-shared-contract-matches", \
+      "Peer shared contract matches", "The peer shared settings contract hash matches this firmware.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_S16(peripheral_0_rssi, "peripheral-0-rssi", \
+      "Peripheral 0 RSSI", "Latest received ESB packet RSSI; -128 means no packet has been received since boot.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_S16(peripheral_1_rssi, "peripheral-1-rssi", \
+      "Peripheral 1 RSSI", "Latest received ESB packet RSSI; -128 means no packet has been received since boot.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_BOOL(keymap_synchronized, "keymap-synchronized", \
+      "Keymap synchronized", "The keymap sync prerequisite for shared settings is met.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_BOOL(keymap_schema_matches, "keymap-schema-matches", \
+      "Keymap schema matches", "The peer keymap schema contract matches this firmware.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_BOOL(keymap_dirty, "keymap-dirty", \
+      "Keymap has unsaved edits", "Unsaved keymap edits can defer shared settings synchronization.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_BOOL(keymap_transfer_active, "keymap-transfer-active", \
+      "Keymap transfer active", "A keymap synchronization transfer is active.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_BOOL(keymap_receive_active, "keymap-receive-active", \
+      "Keymap receive active", "A keymap offer or transfer is being received.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_BOOL(keymap_waiting_for_keyboard, "keymap-waiting-for-keyboard", \
+      "Waiting for Keyboard arbitration", "Dongle has offered its revision so Keyboard can resolve a conflict.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_BOOL(keymap_offer_pending, "keymap-offer-pending", \
+      "Keymap offer pending", "The runtime is waiting to send or receive a keymap offer.") \
+    keymap_offer_decision { \
+      compatible = "sekigon,dynamic-setting"; \
+      setting-name = "keymap-offer-decision"; \
+      label = "Last keymap offer decision"; \
+      help = "Result of evaluating the most recently received keymap offer."; \
+      value-type = "enum"; \
+      default-enum = "unknown"; \
+      enum-values = "unknown", "equal", "send", "receive", "resolve-keyboard", \
+        "wait-keyboard", "incompatible", "diverged"; \
+      read-only; \
+    }; \
+    keymap_transfer_phase { \
+      compatible = "sekigon,dynamic-setting"; \
+      setting-name = "keymap-transfer-phase"; \
+      label = "Keymap transfer phase"; \
+      help = "Current outgoing keymap phase; idle means no outgoing transfer."; \
+      value-type = "enum"; \
+      default-enum = "idle"; \
+      enum-values = "idle", "metadata", "data", "commit", "done", "failed"; \
+      read-only; \
+    }; \
+    keymap_transfer_error { \
+      compatible = "sekigon,dynamic-setting"; \
+      setting-name = "keymap-transfer-error"; \
+      label = "Last keymap transfer error"; \
+      help = "Result returned for the most recent outgoing keymap packet."; \
+      value-type = "enum"; \
+      default-enum = "none"; \
+      enum-values = "none", "duplicate", "already-committed", "invalid", "busy", \
+        "stale", "timeout", "no-space", "storage-failed"; \
+      read-only; \
+    }; \
+    keymap_receive_error { \
+      compatible = "sekigon,dynamic-setting"; \
+      setting-name = "keymap-receive-error"; \
+      label = "Last keymap receive error"; \
+      help = "Result generated while receiving the most recent keymap packet."; \
+      value-type = "enum"; \
+      default-enum = "none"; \
+      enum-values = "none", "duplicate", "already-committed", "invalid", "busy", \
+        "stale", "timeout", "no-space", "storage-failed"; \
+      read-only; \
+    }; \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_U32(keymap_transfer_offset, "keymap-transfer-offset", \
+      "Keymap sent offset", "Acknowledged byte offset in the outgoing keymap transfer.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_U32(keymap_transfer_size, "keymap-transfer-size", \
+      "Keymap transfer size", "Total bytes in the outgoing keymap transfer.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_U32(keymap_transfer_age_ms, "keymap-transfer-age-ms", \
+      "Keymap time since progress (ms)", "Milliseconds since the outgoing transfer last advanced.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_U32(keymap_receive_offset, "keymap-receive-offset", \
+      "Keymap received offset", "Bytes received in the incoming keymap transfer.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_U32(keymap_receive_size, "keymap-receive-size", \
+      "Keymap receive size", "Expected bytes in the incoming keymap transfer, once metadata is complete.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_U32(keymap_receive_metadata, "keymap-receive-metadata", \
+      "Keymap metadata received", "Metadata bytes received for the incoming keymap offer.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_U32(keymap_receive_error_code, "keymap-receive-error-code", \
+      "Keymap receive errno", "Positive errno from the failed keymap record write or commit; zero means unknown or none.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_U32(keymap_receive_error_index, "keymap-receive-error-index", \
+      "Keymap receive record index", "Record index that failed; 4294967295 identifies final commit failure.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_BOOL(shared_dirty, "shared-dirty", \
+      "Shared settings dirty", "Shared settings have unsaved local edits.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_BOOL(shared_transfer_active, "shared-transfer-active", \
+      "Shared transfer active", "A shared settings synchronization transfer is active.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_BOOL(shared_offer_pending, "shared-offer-pending", \
+      "Shared offer pending", "A shared settings synchronization offer is queued.") \
+    shared_offer_decision { \
+      compatible = "sekigon,dynamic-setting"; \
+      setting-name = "shared-offer-decision"; \
+      label = "Last shared offer decision"; \
+      help = "Result of evaluating the most recently received shared settings offer."; \
+      value-type = "enum"; \
+      default-enum = "unknown"; \
+      enum-values = "unknown", "equal", "send", "receive", "resolve-keyboard", \
+        "wait-keyboard", "incompatible", "diverged"; \
+      read-only; \
+    }; \
+    shared_transfer_phase { \
+      compatible = "sekigon,dynamic-setting"; \
+      setting-name = "shared-transfer-phase"; \
+      label = "Shared transfer phase"; \
+      help = "Current outgoing shared settings transfer phase."; \
+      value-type = "enum"; \
+      default-enum = "idle"; \
+      enum-values = "idle", "metadata", "data", "commit", "done", "failed"; \
+      read-only; \
+    }; \
+    shared_transfer_error { \
+      compatible = "sekigon,dynamic-setting"; \
+      setting-name = "shared-transfer-error"; \
+      label = "Shared transfer error"; \
+      help = "Result of the last outgoing shared settings transfer."; \
+      value-type = "enum"; \
+      default-enum = "none"; \
+      enum-values = "none", "duplicate", "already-committed", "invalid", "busy", \
+        "stale", "timeout", "no-space", "storage-failed"; \
+      read-only; \
+    }; \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_U32(shared_transfer_offset, "shared-transfer-offset", \
+      "Shared sent offset", "Acknowledged byte offset in the outgoing shared settings transfer.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_U32(shared_receive_metadata, "shared-receive-metadata", \
+      "Shared metadata received", "Metadata bytes received for the incoming shared settings offer.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_U32(store_generation, "store-generation",         \
+      "Store generation", "Current shared settings store generation.")    \
+    nvs_state {                                                               \
+      compatible = "sekigon,dynamic-setting";                                        \
+      setting-name = "nvs-state";                                           \
+      label = "NVS state";                                                  \
+      help = "State of the settings NVS backend and free-space query.";     \
+      value-type = "enum";                                                  \
+      default-enum = "unsupported";                                         \
+      enum-values = "unsupported", "not-ready", "ready", "stats-error"; \
+      read-only;                                                             \
+    };                                                                       \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_U32(nvs_total_bytes, "nvs-total-bytes",       \
+      "NVS partition size (bytes)", "Physical size of the settings NVS partition.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_U32(nvs_free_bytes, "nvs-free-bytes",         \
+      "NVS writable free space (bytes)", "Usable free bytes reported by NVS, excluding its reserved garbage-collection sector.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_U32(sync_generation, "sync-generation",           \
+      "Synchronized generation", "Shared store generation at last sync.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_U32(keyboard_revision_low, "keyboard-revision-low", \
+      "Shared Keyboard revision (low)", "Low 32 bits of Keyboard shared settings revision.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_U32(keyboard_revision_high, "keyboard-revision-high", \
+      "Shared Keyboard revision (high)", "High 32 bits of Keyboard shared settings revision.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_U32(dongle_revision_low, "dongle-revision-low",   \
+      "Shared Dongle revision (low)", "Low 32 bits of Dongle shared settings revision.") \
+    NEMU_LINK_STUDIO_DIAGNOSTIC_U32(dongle_revision_high, "dongle-revision-high", \
+      "Shared Dongle revision (high)", "High 32 bits of Dongle shared settings revision.") \
+    last_stale_reason {                                                       \
+      compatible = "sekigon,dynamic-setting";                                           \
+      setting-name = "last-stale-reason";                                    \
+      label = "Last STALE reason";                                           \
+      help = "Reason code for the most recent rejected shared operation.";  \
+      value-type = "enum";                                                  \
+      default-enum = "none";                                                \
+      enum-values = "none", "session-sequence", "not-ready",              \
+        "not-synchronized", "save-pending", "receive-active",              \
+        "revision-mismatch", "generation-changed", "contract-mismatch",  \
+        "remote-rejected";                                                  \
+      read-only;                                                             \
+    };                                                                  \
+  };
+
+#endif

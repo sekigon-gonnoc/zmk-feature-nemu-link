@@ -1,0 +1,11 @@
+compatible: "sekigon,nemu-link"
+description: ESB mode controls
+properties:
+  source-0-switch-positions:
+    type: array
+    description: Global key positions held together to switch modes; absent disables this source
+  source-1-switch-positions:
+    type: array
+  mode-switch-gpios:
+    type: phandle-array
+    description: Optional active-level momentary switch; a press toggles BLE/ESB

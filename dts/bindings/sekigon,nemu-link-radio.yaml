@@ -1,0 +1,13 @@
+# Copyright (c) 2025 The ZMK Contributors
+# SPDX-License-Identifier: MIT
+
+description: |
+  Complete specification of ESB split connection
+
+compatible: "sekigon,nemu-link-radio"
+
+properties:
+  addr-prefix:
+    type: array
+    default: [0x36, 0xa9]
+    description: "base address 0"

@@ -1,0 +1,8 @@
+manifest:
+  projects:
+    - name: nrf
+      url: https://github.com/sekigon-gonnoc/sdk-nrf
+      revision: zmk-v0.4+nemu-link
+    - name: nrfxlib
+      url: https://github.com/nrfconnect/sdk-nrfxlib
+      revision: dfadf17305d8f000eda9aa74a5b9ff1c5647a23e

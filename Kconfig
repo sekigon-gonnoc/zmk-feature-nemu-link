@@ -1,0 +1,561 @@
+config ZMK_NEMU_LINK
+    bool "ZMK Nemu-link"
+    depends on SOC_COMPATIBLE_NRF52X && HAS_HW_NRF_CCM
+    select ESB
+    select ESB_DYNAMIC_INTERRUPTS
+    select MPSL_FEM_ONLY
+    select ENTROPY_GENERATOR if ZMK_NEMU_LINK_SECURITY
+    help
+      Runtime radio, split transport, secure link and Studio bridge.
+
+config ZMK_NEMU_LINK_RADIO_DIAGNOSTIC
+    bool "Periodic radio counters for USB log diagnostics"
+    depends on ZMK_NEMU_LINK && LOG
+    help
+      Log per-source link/authentication phases and error counters, hardware
+      FIFO fullness and software ACK accounting every three seconds. Does not
+      log secrets or change the reconnection/search policy.
+
+config ZMK_NEMU_LINK_POWER_PROFILE
+    bool "Time peripheral radio and crypto operations"
+    depends on ZMK_NEMU_LINK && ZMK_NEMU_LINK_IDLE
+    help
+      Collect clock/init/CCM/TX/work/shutdown durations and hardware TX
+      attempts, then print interval statistics from the link service.
+      Uses the system cycle clock (about 30.5 us on the nRF RTC timer).
+      Disabled unless explicitly enabled; no additional clock or GPIO is requested.
+
+config ZMK_NEMU_LINK_POWER_PROFILE_HIRES
+    bool "Use a diagnostic-only 1 MHz TIMER4 for elapsed times"
+    depends on ZMK_NEMU_LINK_POWER_PROFILE && SOC_SERIES_NRF52X
+    depends on $(dt_nodelabel_has_compat,timer4,$(DT_COMPAT_NORDIC_NRF_TIMER))
+    depends on !NRFX_TIMER4 && !ESB_SYS_TIMER4
+    help
+      Reserve an otherwise unused TIMER4 without interrupts or PPI. The timer
+      runs continuously and changes idle power. For USB timing investigation
+      only; do not use this firmware to compare battery current.
+
+config ZMK_NEMU_LINK_POWER_TRACE
+    bool "Record a bounded per-transaction timing trace in RAM"
+    depends on ZMK_NEMU_LINK_POWER_PROFILE
+    help
+      Record preparation, CCM setup/IRQ/cleanup, transmit, worker, ACK and
+      shutdown boundaries. Print up to three completed traces every three
+      seconds. Never record payloads, keys or nonces. No printing in IRQs.
+
+config ZMK_NEMU_LINK_CCM_RADIO
+    bool "Overlap CCM with PTX RADIO ramp and ACK reception"
+    depends on ZMK_NEMU_LINK && ZMK_NEMU_LINK_ROLE_PERIPHERAL && SOC_NRF52840
+    default y
+    help
+        Gates TX START on successful CCM completion and starts mini ACK
+        decryption from RADIO's bit counter. Continuous PRX keeps the
+        synchronous path. Requires the checked build-directory ESB hooks.
+
+config ZMK_NEMU_LINK_FULL_STATE_INTERVALS
+    int "Full metadata snapshot period in heartbeat intervals"
+    depends on ZMK_NEMU_LINK
+    range 1 60
+    default 10
+
+config ZMK_NEMU_LINK_DELIVERY_RETRIES
+    int "Extra ordered attempts after an ESB hardware retry batch fails"
+    depends on ZMK_NEMU_LINK
+    range 0 15
+    default 2
+    help
+      Retry the same ciphertext at the head of the queue. Hardware retries
+      remain enabled. Duplicates never replay mouse movement or sensor deltas.
+
+config ZMK_NEMU_LINK_MOTION_BACKPRESSURE
+    bool "Buffer relative pointer motion while the transmit queue is full"
+    depends on ZMK_NEMU_LINK && ZMK_NEMU_LINK_ROLE_PERIPHERAL
+    default n
+    help
+      Preserve and merge unsent X/Y movement during transient congestion.
+      This can increase pointer latency and does not recover packets that
+      were accepted by the radio but could not be delivered.
+
+config ZMK_NEMU_LINK_MODE_SWITCH
+    bool "Runtime BLE/ESB split transport switching"
+    depends on ZMK_NEMU_LINK && ZMK_BLE && ZMK_NEMU_LINK_ROLE_PERIPHERAL
+    select ZMK_NEMU_LINK_MODE_CONTROL
+    select BT_CTLR_HCI_LIFECYCLE_LOCK if BT_LL_SW_SPLIT
+    select SOC_FLASH_NRF_RADIO_SYNC_RUNTIME if SOC_FLASH_NRF_RADIO_SYNC_TICKER
+
+config ZMK_NEMU_LINK_FIXED_ESB
+    bool "Fixed ESB-only peripheral transport"
+    depends on ZMK_NEMU_LINK && ZMK_NEMU_LINK_ROLE_PERIPHERAL && !ZMK_BLE
+    default y
+    help
+      Enable Nemu-link as the only split transport on a peripheral keyboard.
+      The transport starts when ZMK selects it and stays active until shutdown.
+      This is intended for keyboards that send input to an ESB USB receiver.
+
+# The split software controller hides its runtime IRQ lifecycle settings under
+# this developer-only menu. Enable them for the shared BLE/ESB radio path.
+config BT_CTLR_ADVANCED_FEATURES
+    default y if ZMK_NEMU_LINK_MODE_SWITCH && BT_LL_SW_SPLIT
+config BT_CTLR_DYNAMIC_INTERRUPTS
+    default y if ZMK_NEMU_LINK_MODE_SWITCH && BT_LL_SW_SPLIT
+
+config ZMK_NEMU_LINK_ROLE_PERIPHERAL
+    bool "ESB sender role"
+    depends on ZMK_NEMU_LINK && !BOARD_NEMU_LINK_DONGLE
+    default y if ZMK_NEMU_LINK && !BOARD_NEMU_LINK_DONGLE
+
+choice ZMK_NEMU_LINK_RADIO_PHY
+    prompt "Nemu-link radio PHY"
+    depends on ZMK_NEMU_LINK && (SOC_NRF52833 || SOC_NRF52840)
+    default ZMK_NEMU_LINK_RADIO_BLE_2M
+    help
+      Select the BLE modulation bitrate for the proprietary Nemu-link ESB link.
+      All peers in a link must use the same setting.
+
+config ZMK_NEMU_LINK_RADIO_BLE_1M
+    bool "BLE 1 Mbps"
+
+config ZMK_NEMU_LINK_RADIO_BLE_2M
+    bool "BLE 2 Mbps"
+
+endchoice
+
+config ZMK_NEMU_LINK_DATA_WHITENING
+    bool "Enable RADIO data whitening for Nemu-link ESB"
+    depends on ZMK_NEMU_LINK && (SOC_NRF52833 || SOC_NRF52840)
+    default y
+    help
+      Enable RADIO whitening and de-whitening for all packets on the link.
+      All peers must use the same setting and whitening IV.
+
+config ZMK_NEMU_LINK_DATA_WHITENING_IV
+    int "Nemu-link RADIO whitening initial value"
+    depends on ZMK_NEMU_LINK && (SOC_NRF52833 || SOC_NRF52840)
+    range 0 127
+    default 85
+    help
+      Seven-bit DATAWHITEIV value used by every peer. The default is 0x55.
+
+config ZMK_NEMU_LINK_KEY_PROVISION_USB
+    bool "Register Nemu-link keys over standalone USB HID"
+    depends on ZMK_NEMU_LINK && !ZMK_USB && USB_DEVICE_STACK && DT_HAS_NORDIC_NRF_USBD_ENABLED
+    default y
+    select USB_DEVICE_HID
+    help
+      Provide the Nemu-link key registration HID feature report on USB-capable
+      nRF52 hardware without keyboard USB HID (for example split peripherals).
+      ZMK_USB devices already include this report in their keyboard interface.
+      Disable only when keys are provisioned by another mechanism.
+
+config ZMK_NEMU_LINK_PERIPHERAL_WAIT_USB
+    bool
+    depends on ZMK_NEMU_LINK && ZMK_NEMU_LINK_ROLE_PERIPHERAL
+    depends on USB_DEVICE_STACK
+    default y
+    help
+      Keep the ESB peripheral transport pending until the USB device stack has
+      been initialized. For standalone USB HID, usb_enable() signals readiness;
+      for ZMK_USB, ESB starts after the ZMK USB initialization hook. USB host
+      enumeration is not required, so ESB also works without a USB cable.
+
+config ZMK_NEMU_LINK_PERIPHERAL_ID
+    int "ESB sender source ID"
+    default 0
+config ZMK_NEMU_LINK_PERIPHERAL_COUNT
+    int "ESB receiver source count"
+    default 2
+config ZMK_NEMU_LINK_PRIORITY
+    int
+    default 2
+choice ZMK_NEMU_LINK_TX_POWER
+    prompt "ESB radio transmit power"
+    depends on ZMK_NEMU_LINK
+    default ZMK_NEMU_LINK_TX_POWER_PLUS_8
+    help
+      Select the ESB radio transmit power. Values depend on the SoC radio.
+
+config ZMK_NEMU_LINK_TX_POWER_MINUS_8
+    bool "-8 dBm"
+    depends on SOC_NRF52833 || SOC_NRF52840
+config ZMK_NEMU_LINK_TX_POWER_MINUS_12
+    bool "-12 dBm"
+    depends on SOC_NRF52833 || SOC_NRF52840
+config ZMK_NEMU_LINK_TX_POWER_0
+    bool "+0 dBm"
+config ZMK_NEMU_LINK_TX_POWER_PLUS_2
+    bool "+2 dBm"
+    depends on SOC_NRF52833 || SOC_NRF52840
+config ZMK_NEMU_LINK_TX_POWER_PLUS_3
+    bool "+3 dBm"
+    depends on SOC_NRF52810 || SOC_NRF52811 || SOC_NRF52833 || SOC_NRF52840
+config ZMK_NEMU_LINK_TX_POWER_PLUS_4
+    bool "+4 dBm"
+config ZMK_NEMU_LINK_TX_POWER_PLUS_5
+    bool "+5 dBm"
+    depends on SOC_NRF52833 || SOC_NRF52840
+config ZMK_NEMU_LINK_TX_POWER_PLUS_6
+    bool "+6 dBm"
+    depends on SOC_NRF52833 || SOC_NRF52840
+config ZMK_NEMU_LINK_TX_POWER_PLUS_7
+    bool "+7 dBm"
+    depends on SOC_NRF52833 || SOC_NRF52840
+config ZMK_NEMU_LINK_TX_POWER_PLUS_8
+    bool "+8 dBm"
+    depends on SOC_NRF52833 || SOC_NRF52840
+
+endchoice
+config ZMK_NEMU_LINK_PROTO_TX_RETRANSMIT_DELAY
+    int
+    default 600
+config ZMK_NEMU_LINK_PROTO_TX_RETRANSMIT_COUNT
+    int
+    default 6
+config ZMK_NEMU_LINK_PROTO_MSGQ_ITEMS
+    int "Radio transmit queue capacity"
+    depends on ZMK_NEMU_LINK
+    range 8 128
+    default 8
+    help
+      Buffer transient bursts while radio delivery is being retried. Larger
+      values consume RAM and may increase latency when the link is congested.
+config ZMK_NEMU_LINK_LINK_INTERVAL_MS
+    int "Heartbeat and full snapshot interval (ms)"
+    depends on ZMK_NEMU_LINK
+    range 100 10000
+    default 1000
+    help
+      Periodic STATE and HELLO interval. Physical input still sends immediately.
+      Configure the same interval on both halves and the dongle, including
+      idle-disabled comparison builds. No extra idle ACK polling is added.
+
+config ZMK_NEMU_LINK_LINK_TIMEOUT_INTERVALS
+    int "Link expiry in heartbeat intervals"
+    depends on ZMK_NEMU_LINK
+    range 5 20
+    default 5
+    help
+      Central source release and peripheral application ACK/handshake expiry
+      are INTERVAL_MS times this value (5000ms with the defaults). Five periods
+      allow for the one-transaction-delayed ACK and initial handshake.
+
+config ZMK_NEMU_LINK_TEST_DROP_RELEASE_ONCE
+    bool "Drop the first immediate release snapshot to test periodic recovery"
+    depends on ZMK_NEMU_LINK && ZMK_NEMU_LINK_MODE_SWITCH
+    help
+      Diagnostic only. Drop one release STATE after each ESB activation.
+      The next periodic heartbeat still includes the actual physical state.
+
+config ZMK_NEMU_LINK_IDLE
+    bool
+    depends on ZMK_NEMU_LINK && ZMK_NEMU_LINK_ROLE_PERIPHERAL
+    depends on ZMK_NEMU_LINK_MODE_SWITCH || ZMK_NEMU_LINK_FIXED_ESB
+    default y
+    help
+      Peripheral stops the ESB radio and releases HFCLK between completed
+      transactions. It wakes for the next scheduled heartbeat and receives
+      acknowledgements during normal transactions.
+
+config ZMK_NEMU_LINK_IDLE_GRACE_MS
+    int "Quiet time before radio shutdown (ms)"
+    depends on ZMK_NEMU_LINK_IDLE
+    range 0 70
+    default 0
+    help
+      Zero shuts the radio down at the first completed, quiet transaction.
+      Queued TX, hardware retries and unprocessed RX still prevent shutdown.
+
+config ZMK_NEMU_LINK_IDLE_WAKE_TIMEOUT_MS
+    int "Bounded HFCLK idle wake timeout (ms)"
+    depends on ZMK_NEMU_LINK_IDLE
+    range 1 10
+    default 5
+
+config ZMK_NEMU_LINK_IDLE_WAKE_MARGIN_MS
+    int "Lead time before scheduled ESB transmission (ms)"
+    depends on ZMK_NEMU_LINK_IDLE
+    range 0 10
+    default 0
+    help
+      Wake the radio this long before a scheduled transmission. The HFCLK
+      startup timeout remains separate; a slower wake can send slightly late.
+      Zero wakes at the deadline and sends as soon as the clock is ready,
+      avoiding an awake wait before periodic transmissions.
+
+config ZMK_NEMU_LINK_IDLE_RETRY_MS
+    int "Backoff after an idle wake failure (ms)"
+    depends on ZMK_NEMU_LINK_IDLE
+    range 10 1000
+    default 100
+    help
+      Keep clock-failure retry backoff independent of the heartbeat interval.
+
+config ZMK_NEMU_LINK_HOP
+    bool
+    depends on ZMK_NEMU_LINK
+    default y
+    help
+      Runtime frames use dongle-controlled channel generations and rendezvous.
+
+config ZMK_NEMU_LINK_CHANNEL_SCAN
+    bool "Scan idle candidate channels on the dongle"
+    depends on ZMK_NEMU_LINK_HOP && BOARD_NEMU_LINK_DONGLE && SOC_SERIES_NRF52X
+    default y
+
+config ZMK_NEMU_LINK_ADAPTIVE_MIGRATION
+    bool "Migrate after sustained packet loss on both links"
+    depends on ZMK_NEMU_LINK_CHANNEL_SCAN
+    default y
+
+config ZMK_NEMU_LINK_SCAN_IDLE_MS
+    int "Quiet time before scanning (ms)"
+    depends on ZMK_NEMU_LINK_CHANNEL_SCAN
+    range 20 10000
+    default 100
+
+config ZMK_NEMU_LINK_SCAN_WINDOW_US
+    int "Candidate RSSI observation window (us)"
+    depends on ZMK_NEMU_LINK_CHANNEL_SCAN
+    range 100 1000
+    default 500
+
+config ZMK_NEMU_LINK_SCAN_INTERVAL_MS
+    int "Minimum interval between individual scans (ms)"
+    depends on ZMK_NEMU_LINK_CHANNEL_SCAN
+    range 20 10000
+    default 100
+
+config ZMK_NEMU_LINK_BUSY_RSSI_DBM
+    int "Candidate busy RSSI threshold (dBm)"
+    depends on ZMK_NEMU_LINK_CHANNEL_SCAN
+    range -100 -20
+    default -75
+
+config ZMK_NEMU_LINK_MIN_SCAN_WINDOWS
+    int "Minimum observations before choosing a candidate"
+    depends on ZMK_NEMU_LINK_CHANNEL_SCAN
+    range 2 1000
+    default 20
+
+config ZMK_NEMU_LINK_MIGRATION_LOSS_PERMILLE
+    int "Packet loss EWMA threshold on each link (per mille)"
+    depends on ZMK_NEMU_LINK_CHANNEL_SCAN
+    range 50 900
+    default 100
+
+config ZMK_NEMU_LINK_MIGRATION_DEGRADE_MS
+    int "Both links must remain degraded for this long (ms)"
+    depends on ZMK_NEMU_LINK_CHANNEL_SCAN
+    range 100 60000
+    default 1000
+
+config ZMK_NEMU_LINK_MIGRATION_COOLDOWN_MS
+    int "Cooldown after successful migration (ms)"
+    depends on ZMK_NEMU_LINK_CHANNEL_SCAN
+    range 0 600000
+    default 30000
+
+config ZMK_NEMU_LINK_FAILED_CHANNEL_PENALTY_MS
+    int "Failed candidate exclusion time (ms)"
+    depends on ZMK_NEMU_LINK_CHANNEL_SCAN
+    range 1000 3600000
+    default 300000
+
+config ZMK_NEMU_LINK_SEARCH_FAST_MS
+    int "Fast discovery duration before reducing search duty (ms)"
+    depends on ZMK_NEMU_LINK_HOP && ZMK_NEMU_LINK_ROLE_PERIPHERAL
+    range 0 600000
+    default 5000
+    help
+      Fast discovery lasts this long after search starts or local input occurs.
+
+config ZMK_NEMU_LINK_SEARCH_INTERVAL_MS
+    int "Discovery window interval after fast discovery (ms)"
+    depends on ZMK_NEMU_LINK_HOP && ZMK_NEMU_LINK_ROLE_PERIPHERAL
+    range 100 60000
+    default 10000
+    help
+      Repeat a 100ms discovery window at this interval. The existing 20ms
+      probes in each window let the dongle deliver its delayed ACK payloads.
+      Window starts vary by up to 600ms to avoid locking to the dongle patrol.
+      Sleep between windows; normal input timing resumes once connected.
+
+config ZMK_NEMU_LINK_MULTI_DONGLE
+    bool "Select between registered ESB dongles"
+    depends on ZMK_NEMU_LINK_HOP && ZMK_NEMU_LINK_STUDIO_PROTOCOL
+    help
+      Select among up to eight registered dongles. Only one radio link and one
+      set of frame/Studio buffers exist.
+
+config ZMK_NEMU_LINK_DONGLE_COUNT
+    int "Number of provisioned ESB dongles"
+    depends on ZMK_NEMU_LINK_MULTI_DONGLE
+    range 1 8
+    default 2
+
+config ZMK_NEMU_LINK_DONGLE_ID
+    int "This receiver's registered dongle ID"
+    depends on ZMK_NEMU_LINK_MULTI_DONGLE && BOARD_NEMU_LINK_DONGLE
+    range 1 8
+    default 1
+
+config ZMK_NEMU_LINK_TEST_SELECTION_IGNORE_MS
+    int "Diagnostic: ignore the first dongle selection change for this long (ms)"
+    depends on ZMK_NEMU_LINK_MULTI_DONGLE && ZMK_NEMU_LINK_ROLE_PERIPHERAL
+    range 0 60000
+    default 0
+    help
+      Fault injection only. Continue heartbeats on the old receiver while
+      ignoring selection instructions, then allow the repeated generation to
+      repair the missed switch. No exploration is triggered by an absent hand.
+
+config ZMK_NEMU_LINK_HOP_TEST_INTERVAL_MS
+    int "Diagnostic: request a channel change periodically (0 disables)"
+    depends on ZMK_NEMU_LINK_HOP && BOARD_NEMU_LINK_DONGLE
+    range 0 600000
+    default 0
+    help
+      Test firmware only. Request a move when both sources are UP, after this
+      interval; keep the normal announcement window and receipt tracking.
+
+config ZMK_NEMU_LINK_STUDIO_PROTOCOL
+    bool "Studio synchronization protocol (all three images)"
+    depends on ZMK_NEMU_LINK_HOP
+    default y if ZMK_NEMU_LINK
+    help
+      Shared named behavior bindings, combos and physical layouts.
+      Enabled by default for Nemu-link images. Requires the hop link and
+      matching configuration on all peers; disable it when Studio sync is not
+      used.
+
+# The RPC UART chosen node is supplied by studio-rpc-usb-uart. Selecting the
+# local Studio UI from that transport keeps build matrices free of a duplicate
+# CONFIG_ZMK_STUDIO setting without enabling Nemu-link keymap sync.
+DT_CHOSEN_NEMU_LINK_STUDIO_RPC_UART := zmk,studio-rpc-uart
+
+config ZMK_NEMU_LINK_STUDIO_RPC_UART
+    bool
+    default y if ZMK_NEMU_LINK && BOARD_NEMU_LINK_DONGLE && $(dt_chosen_enabled,$(DT_CHOSEN_NEMU_LINK_STUDIO_RPC_UART))
+    select ZMK_STUDIO
+    help
+      Enable local ZMK Studio when the Nemu-link dongle has the Studio RPC UART
+      transport. This does not enable synchronization with Nemu-link peers.
+
+config ZMK_NEMU_LINK_STUDIO_ENDPOINT
+    bool "ZMK Studio endpoint with editable keymap"
+    depends on ZMK_NEMU_LINK && ZMK_NEMU_LINK_STUDIO_PROTOCOL
+    depends on !ZMK_SPLIT || ZMK_SPLIT_ROLE_CENTRAL
+    imply ZMK_STUDIO
+    imply ZMK_KEYMAP_SETTINGS_STORAGE
+    imply ZMK_KEYMAP_LAYER_REORDERING
+    help
+      Enable the Studio editor and persistent keymap support on this central.
+      The shared runtime Studio protocol must also be enabled on all peers.
+
+config ZMK_NEMU_LINK_STUDIO_SYNC
+    bool
+    default y if ZMK_NEMU_LINK_STUDIO_ENDPOINT && (!ZMK_SPLIT || ZMK_SPLIT_ROLE_CENTRAL)
+    depends on ZMK_NEMU_LINK_STUDIO_PROTOCOL && (!ZMK_SPLIT || ZMK_SPLIT_ROLE_CENTRAL) && ZMK_STUDIO
+    depends on ZMK_KEYMAP_SETTINGS_STORAGE && ZMK_KEYMAP_LAYER_REORDERING
+
+config ZMK_NEMU_LINK_STUDIO_SHARED_SETTINGS
+    bool
+    default y
+    depends on ZMK_NEMU_LINK_STUDIO_SYNC && ZMK_DYNAMIC_SETTINGS
+
+config ZMK_NEMU_LINK_BOOT_ESB
+    bool "Start in ESB mode after initialization"
+    depends on ZMK_NEMU_LINK_MODE_SWITCH
+    default n
+
+if ZMK_NEMU_LINK && BOARD_NEMU_LINK_DONGLE
+config ZMK_SPLIT_BLE_CENTRAL_BATTERY_LEVEL_FETCHING
+    bool
+    default y
+endif
+
+config ZMK_NEMU_LINK_MODE_CHORD
+    bool "Hold configured keys to switch Nemu-link transports"
+    depends on ZMK_NEMU_LINK_MODE_CONTROL
+    depends on ZMK_NEMU_LINK_MODE_SWITCH || BOARD_NEMU_LINK_DONGLE || \
+             (!ZMK_SPLIT && ZMK_NEMU_LINK_FIXED_ESB && ZMK_USB)
+    help
+      Configure source-0-switch-positions and source-1-switch-positions in the
+      sekigon,nemu-link node. Split builds switch BLE/ESB as before. Standalone
+      fixed-ESB USB builds switch the preferred endpoint between USB and NONE,
+      where NONE routes input through ESB. An omitted list disables that
+      source's chord.
+
+config ZMK_NEMU_LINK_MODE_CONTROL
+    bool "Nemu-link mode behavior and control"
+    depends on ZMK_NEMU_LINK && (ZMK_NEMU_LINK_MODE_SWITCH || BOARD_NEMU_LINK_DONGLE || \
+                                 (!ZMK_SPLIT && ZMK_NEMU_LINK_FIXED_ESB && ZMK_USB))
+    help
+      Build the nl_mode behavior and optional mode chord listener. Runtime
+      BLE/ESB switching is opt-in through ZMK_NEMU_LINK_MODE_SWITCH and
+      selects this automatically. On a fixed-ESB dongle, enable this explicitly
+      to use the mode chord or request BLE return from the keymap or a host
+      command. Standalone fixed-ESB USB keyboards can use this behavior to
+      switch between local USB and ESB-routed input.
+
+config ZMK_NEMU_LINK_MODE_CHORD_MS
+    int "Local BLE chord and dongle BLE-return hold time (ms)"
+    depends on ZMK_NEMU_LINK_MODE_CHORD
+    range 1 60000
+    default 1500
+
+config ZMK_NEMU_LINK_MODE_REMOTE_CHORD_MS
+    int "BLE central hold time for the other hand (ms)"
+    depends on ZMK_NEMU_LINK_MODE_CHORD
+    range 1 60000
+    default 1100
+
+config ZMK_NEMU_LINK_MODE_RECOVERY_MS
+    int "Local ESB-to-BLE recovery hold time (ms)"
+    depends on ZMK_NEMU_LINK_MODE_CHORD
+    range 1 60000
+    default 2500
+
+config ZMK_NEMU_LINK_RECEIVER_WAIT_USB
+    bool "Wait for USB HID readiness before starting the ESB receiver"
+    depends on ZMK_NEMU_LINK && BOARD_NEMU_LINK_DONGLE && ZMK_NEMU_LINK_HOP && ZMK_USB
+    default y
+
+config ZMK_NEMU_LINK_STUDIO_SOURCE
+    int "ESB source ID of the keyboard's BLE central / Studio endpoint"
+    depends on ZMK_NEMU_LINK_STUDIO_PROTOCOL
+    range 0 1
+    default 1
+
+config ZMK_NEMU_LINK_AUTO_BLE
+    bool "Return to BLE when dongle application ACKs stop"
+    depends on ZMK_NEMU_LINK_MODE_SWITCH
+    default n
+
+config ZMK_NEMU_LINK_AUTO_BLE_TIMEOUT_MS
+    int "Time without a fresh application ACK before BLE return (ms)"
+    depends on ZMK_NEMU_LINK_AUTO_BLE
+    range 1000 600000
+    default 5000
+
+config ZMK_NEMU_LINK_MODE_GPIO
+    bool "Momentary GPIO switch toggles BLE/ESB"
+    depends on ZMK_NEMU_LINK && GPIO
+    help
+      Configure mode-switch-gpios in the sekigon,nemu-link node.
+      A debounced press toggles mode. Release does not change mode.
+
+config ZMK_NEMU_LINK_SECURITY
+    bool
+    depends on ZMK_NEMU_LINK_HOP
+    default y
+    select MBEDTLS
+    select MBEDTLS_PSA_CRYPTO_C
+    select MBEDTLS_ENABLE_HEAP
+    select PSA_WANT_ALG_CCM
+    select PSA_WANT_ALG_HKDF
+    select PSA_WANT_ALG_HMAC
+    select PSA_WANT_ALG_SHA_256
+    select PSA_WANT_KEY_TYPE_AES
+    select PSA_WANT_KEY_TYPE_HMAC
+    help
+      All runtime frames require the product-set PSK and authenticated encryption.

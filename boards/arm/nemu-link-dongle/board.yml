@@ -1,0 +1,5 @@
+board:
+  name: nemu-link-dongle
+  vendor: sekigon
+  socs:
+    - name: nrf52833
