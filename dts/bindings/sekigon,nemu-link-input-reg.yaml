@@ -1,0 +1,14 @@
+# Copyright (c) 2026 The nemu-link Contributors
+# SPDX-License-Identifier: MIT
+
+description: Map an input-listener instance to a nemu-link wire input register
+
+compatible: "sekigon,nemu-link-input-reg"
+
+properties:
+  listener-index:
+    type: int
+    required: true
+  wire-reg:
+    type: int
+    required: true

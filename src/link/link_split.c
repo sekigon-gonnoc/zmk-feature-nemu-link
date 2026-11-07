@@ -1,8 +1,11 @@
 #include <errno.h>
 #include <limits.h>
+#include <stdint.h>
 #include <string.h>
 #include <zephyr/kernel.h>
 #include <zephyr/input/input.h>
+#include <zephyr/devicetree.h>
+#include <zephyr/sys/util.h>
 #if IS_ENABLED(CONFIG_ZMK_NEMU_LINK_RADIO_DIAGNOSTIC)
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(nemu_link_split_diag, LOG_LEVEL_INF);
@@ -76,6 +79,46 @@ static uint32_t split_tx_sequence[NEMU_LINK_LINK_SOURCES];
 static struct nemu_link_split_rx split_rx[NEMU_LINK_LINK_SOURCES];
 #if IS_ENABLED(CONFIG_ZMK_INPUT_SPLIT) && IS_ENABLED(CONFIG_BOARD_NEMU_LINK_DONGLE)
 static uint8_t split_input_regs[NEMU_LINK_LINK_SOURCES][32];
+#endif
+
+#if IS_ENABLED(CONFIG_ZMK_NEMU_LINK_MODE_SWITCH) || IS_ENABLED(CONFIG_ZMK_NEMU_LINK_FIXED_ESB)
+#define DT_DRV_COMPAT sekigon_nemu_link_input_reg
+
+struct input_reg_mapping {
+    uint8_t listener_index;
+    uint8_t wire_reg;
+};
+
+#if DT_HAS_COMPAT_STATUS_OKAY(DT_DRV_COMPAT)
+#define INPUT_REG_ASSERT(inst)                                                                     \
+    BUILD_ASSERT(DT_INST_PROP(inst, listener_index) >= 0 &&                                        \
+                     DT_INST_PROP(inst, listener_index) <= UINT8_MAX,                              \
+                 "nemu-link input listener-index must fit in one byte");                           \
+    BUILD_ASSERT(DT_INST_PROP(inst, wire_reg) >= 0 && DT_INST_PROP(inst, wire_reg) <= UINT8_MAX,   \
+                 "nemu-link input wire-reg must fit in one byte");
+DT_INST_FOREACH_STATUS_OKAY(INPUT_REG_ASSERT)
+
+#define INPUT_REG_ENTRY(inst)                                                                      \
+    {                                                                                              \
+        .listener_index = DT_INST_PROP(inst, listener_index),                                      \
+        .wire_reg = DT_INST_PROP(inst, wire_reg),                                                  \
+    },
+
+static const struct input_reg_mapping input_reg_mappings[] = {
+    DT_INST_FOREACH_STATUS_OKAY(INPUT_REG_ENTRY)};
+#endif
+
+static uint8_t input_wire_reg(uint8_t listener_index) {
+#if DT_HAS_COMPAT_STATUS_OKAY(DT_DRV_COMPAT)
+    for (size_t i = 0; i < ARRAY_SIZE(input_reg_mappings); i++) {
+        const struct input_reg_mapping *mapping = &input_reg_mappings[i];
+        if (mapping->listener_index == listener_index) {
+            return mapping->wire_reg;
+        }
+    }
+#endif
+    return listener_index;
+}
 #endif
 
 static bool split_route(uint8_t source, struct nemu_link_split_frame *f) {
@@ -554,9 +597,10 @@ int nemu_link_split_receive(const struct rx_frame *rx) {
 #endif
 
 #if IS_ENABLED(CONFIG_ZMK_NEMU_LINK_MODE_SWITCH) || IS_ENABLED(CONFIG_ZMK_NEMU_LINK_FIXED_ESB)
-int zmk_nemu_link_input(uint8_t reg, const struct input_event *evt) {
+int zmk_nemu_link_input(uint8_t listener_index, const struct input_event *evt) {
+    uint8_t wire_reg = input_wire_reg(listener_index);
     k_mutex_lock(&link_lock, K_FOREVER);
-    int err = split_input(reg, evt->sync, evt->type, evt->code, evt->value);
+    int err = split_input(wire_reg, evt->sync, evt->type, evt->code, evt->value);
 #if IS_ENABLED(CONFIG_ZMK_NEMU_LINK_RADIO_DIAGNOSTIC)
     split_diag_input(CONFIG_ZMK_NEMU_LINK_PERIPHERAL_ID, evt->type, evt->code, evt->value,
                      evt->sync);

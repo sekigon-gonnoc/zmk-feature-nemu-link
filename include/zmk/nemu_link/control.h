@@ -41,4 +41,5 @@ int zmk_nemu_link_ble_split_resume(void);
 int zmk_nemu_link_ble_host_resume(void);
 
 struct input_event;
-int zmk_nemu_link_input(uint8_t reg, const struct input_event *event);
+/* Forward a local listener event; DTS mappings select wire-reg by listener index. */
+int zmk_nemu_link_input(uint8_t listener_index, const struct input_event *event);
