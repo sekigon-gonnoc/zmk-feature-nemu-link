@@ -16,6 +16,12 @@ int zmk_nemu_link_register_observer(const struct zmk_nemu_link_observer *observe
 int zmk_nemu_link_request_mode(bool esb);
 int zmk_nemu_link_request_peer_mode(bool esb);
 bool zmk_nemu_link_owns_radio(void);
+/* Enable or disable high-rate input tracking for one sensor instance. The
+ * device pointer is an opaque, stable identity and each sensor is independent.
+ * Call activity after a successful sensor read. Registration only keeps the
+ * ESB radio awake for the configured inactivity window. */
+int zmk_nemu_link_fast_input_register(const void *device, bool enabled);
+int zmk_nemu_link_fast_input_activity(const void *device);
 struct zmk_nemu_link_audio_callbacks {
     void (*fragment)(uint8_t source, uint16_t block_sequence, uint8_t fragment,
                      uint8_t fragment_count, const uint8_t *pcm, size_t size);

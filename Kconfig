@@ -76,6 +76,16 @@ config ZMK_NEMU_LINK_MOTION_BACKPRESSURE
       This can increase pointer latency and does not recover packets that
       were accepted by the radio but could not be delivered.
 
+config ZMK_NEMU_LINK_FAST_INPUT_TIMEOUT_MS
+    int "Keep the ESB radio awake after high-rate pointer activity (ms)"
+    depends on ZMK_NEMU_LINK && ZMK_NEMU_LINK_IDLE && ZMK_NEMU_LINK_ROLE_PERIPHERAL
+    range 10 1000
+    default 100
+    help
+      Keep HFCLK and the ESB radio ready while a registered high-rate input
+      sensor is active, then return to normal idle behavior after this period
+      without sensor activity. 100ms bridges brief pauses in pointer motion.
+
 config ZMK_NEMU_LINK_MODE_SWITCH
     bool "Runtime BLE/ESB split transport switching"
     depends on ZMK_NEMU_LINK && ZMK_BLE && ZMK_NEMU_LINK_ROLE_PERIPHERAL

@@ -102,9 +102,9 @@ static void reconcile_ack_fifo(void) {
         int actual = esb_ack_payload_count(pipe);
         if (actual < 0) {
             continue;
-    }
+        }
         while (ack_count[pipe] > (unsigned int)actual) {
-        ack_retired(pipe);
+            ack_retired(pipe);
 #if IS_ENABLED(CONFIG_ZMK_NEMU_LINK_RADIO_DIAGNOSTIC)
             diag_ack_reconciled++;
 #endif
@@ -506,8 +506,8 @@ void nemu_link_radio_diag_log(void) {
 #if IS_ENABLED(CONFIG_ZMK_NEMU_LINK_STUDIO_PROTOCOL)
     pending_control = control_pending;
 #endif
-    LOG_INF("radio ACK ledger count0=%u count1=%u control=%u", ack_count[0],
-            ack_count[1], pending_control);
+    LOG_INF("radio ACK ledger count0=%u count1=%u control=%u", ack_count[0], ack_count[1],
+            pending_control);
     irq_unlock(key);
 }
 #endif

@@ -16,6 +16,29 @@ struct dt_idle {
     uint32_t wake_margin_ms;
 };
 void nemu_link_idle_init(struct dt_idle *idle, uint32_t grace_ms, uint32_t wake_margin_ms);
+/* Small, bounded registry of high-rate input sources. */
+#define NEMU_LINK_FAST_INPUT_MAX_SENSORS 4
+struct nemu_link_fast_input_source {
+    const void *device;
+    uint64_t last_activity;
+};
+struct nemu_link_fast_input_state {
+    struct nemu_link_fast_input_source sources[NEMU_LINK_FAST_INPUT_MAX_SENSORS];
+    uint32_t timeout_ms;
+};
+void nemu_link_fast_input_init(struct nemu_link_fast_input_state *state, uint32_t timeout_ms);
+int nemu_link_fast_input_set(struct nemu_link_fast_input_state *state, const void *device,
+                             bool enabled, uint64_t now);
+int nemu_link_fast_input_activity(struct nemu_link_fast_input_state *state, const void *device,
+                                  uint64_t now);
+void nemu_link_fast_input_refresh(struct nemu_link_fast_input_state *state, uint64_t now);
+bool nemu_link_fast_input_active(const struct nemu_link_fast_input_state *state, uint64_t now);
+bool nemu_link_fast_input_active_for_route(const struct nemu_link_fast_input_state *state,
+                                           uint64_t now, bool esb_service_active,
+                                           bool endpoint_non_usb);
+/* Internal ESB service hooks. */
+bool nemu_link_fast_input_any_active(uint64_t now);
+void nemu_link_fast_input_radio_started(uint64_t now);
 /* Serialized policy only: OFF is committed by the caller after radio shutdown
  * and HFCLK release both succeed. Busy includes unprocessed RX, queued TX,
  * hardware retry/ACK and pending mode control. An application ACK waiting

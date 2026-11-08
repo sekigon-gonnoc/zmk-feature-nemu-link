@@ -1203,6 +1203,9 @@ int nemu_link_link_enable(bool value) {
     k_msgq_purge(&link_rx);
     if (value) {
         uint64_t now = k_uptime_get();
+#if IS_ENABLED(CONFIG_ZMK_NEMU_LINK_IDLE) && IS_ENABLED(CONFIG_ZMK_NEMU_LINK_ROLE_PERIPHERAL)
+        nemu_link_fast_input_radio_started(now);
+#endif
 #if IS_ENABLED(CONFIG_BOARD_NEMU_LINK_DONGLE)
         const uint32_t buttons[] = {0, 0};
         nemu_link_link_central_init(&central, initial_nonce, NEMU_LINK_LINK_RELEASE_MS, buttons);
@@ -1967,6 +1970,8 @@ static void service(struct k_work *work) {
 #if IS_ENABLED(CONFIG_ZMK_NEMU_LINK_IDLE)
     uint64_t deadline = next_tx_ms(now);
     bool must_wake = received_mode != 0;
+    bool fast_input_active = nemu_link_fast_input_any_active(now);
+    must_wake |= fast_input_active;
 #if IS_ENABLED(CONFIG_ZMK_NEMU_LINK_STUDIO_SYNC)
     must_wake |= nemu_link_studio_radio_busy();
 #endif
@@ -1984,11 +1989,13 @@ static void service(struct k_work *work) {
 #if IS_ENABLED(CONFIG_ZMK_NEMU_LINK_IDLE)
     now = k_uptime_get();
     deadline = next_tx_ms(now);
+    fast_input_active = nemu_link_fast_input_any_active(now);
     /* Application ACK remains outstanding across sleep, exactly as in link.
      * PTX can only receive it in the NEXT ordinary transaction. Keep the link
      * ledger/deadlines running; never add a transmission just to enter idle. */
     unsigned int irq_key = irq_lock();
     bool busy = received_mode || atomic_get(&tx_pending) || k_msgq_num_used_get(&link_rx);
+    busy |= fast_input_active;
     busy |= !nemu_link_hop_idle_allowed(&hop, now);
 #if IS_ENABLED(CONFIG_ZMK_NEMU_LINK_STUDIO_SYNC)
     busy |= nemu_link_studio_radio_busy();
