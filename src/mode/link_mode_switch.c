@@ -1,4 +1,4 @@
- // Runtime selector for the BLE and runtime ESB split transports.
+// Runtime selector for the BLE and runtime ESB split transports.
 #if defined(CONFIG_ZMK_NEMU_LINK_STUDIO_SYNC)
 #include <zmk/nemu_link/studio_zmk.h>
 #endif
@@ -23,11 +23,15 @@
 #include <zmk/nemu_link/control.h>
 #include <zmk/nemu_link/internal.h>
 #include <zmk/events/position_state_changed.h>
+#if IS_ENABLED(CONFIG_ZMK_SPLIT)
 #include <zmk/split/transport/peripheral.h>
 #include <zmk/split/bluetooth/service.h>
+#endif
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
 #include <zmk/endpoints.h>
 #include <zmk/split/central.h>
+#elif !IS_ENABLED(CONFIG_ZMK_SPLIT)
+#include <zmk/endpoints.h>
 #endif
 
 LOG_MODULE_REGISTER(nemu_link_switch, LOG_LEVEL_INF);
@@ -42,6 +46,7 @@ static bool esb_active;
 static bool ble_suspended;
 static bool mode_pending;
 static bool target_esb;
+static bool boot_esb_pending = IS_ENABLED(CONFIG_ZMK_NEMU_LINK_BOOT_ESB);
 static K_MUTEX_DEFINE(mode_lock);
 K_THREAD_STACK_DEFINE(mode_work_stack, MODE_WORK_STACK_SIZE);
 static struct k_work_q mode_work_q;
@@ -58,9 +63,29 @@ static int mode_workqueue_init(void) {
 }
 SYS_INIT(mode_workqueue_init, POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT);
 
+#if IS_ENABLED(CONFIG_ZMK_SPLIT)
 extern const struct zmk_split_transport_peripheral *zmk_nemu_link_peripheral_transport(void);
+#endif
 
-bool zmk_nemu_link_owns_radio(void) { return esb_active || ble_suspended; }
+bool zmk_nemu_link_owns_radio(void) { return esb_active || ble_suspended || boot_esb_pending; }
+
+static int set_esb_transport_enabled(bool enabled) {
+#if IS_ENABLED(CONFIG_ZMK_SPLIT)
+    return zmk_split_peripheral_select_transport(enabled ? zmk_nemu_link_peripheral_transport()
+                                                         : NULL);
+#else
+    return nemu_link_peripheral_transport_set_enabled(enabled);
+#endif
+}
+
+static int select_ble_transport(void) {
+#if IS_ENABLED(CONFIG_ZMK_SPLIT)
+    return zmk_split_peripheral_select_first_available_transport();
+#else
+    /* Standalone BLE is the host endpoint, not a split peripheral transport. */
+    return 0;
+#endif
+}
 
 static int resume_ble(void) {
 #if IS_ENABLED(CONFIG_ZMK_BLE)
@@ -78,20 +103,23 @@ static int resume_ble(void) {
     }
     ble_suspended = false;
     esb_active = false;
+    boot_esb_pending = false;
     LOG_INF("BLE split resume starting");
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_BLE)
     err = zmk_nemu_link_ble_split_resume();
     LOG_INF("BLE split resume returned %d", err);
     if (err) {
         LOG_ERR("BLE split resume failed: %d", err);
     }
-#if IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
+#endif
+#if !IS_ENABLED(CONFIG_ZMK_SPLIT) || IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
     err = zmk_nemu_link_ble_host_resume();
     if (err) {
         LOG_ERR("BLE host advertising failed: %d", err);
     }
 #endif
     LOG_INF("BLE peripheral transport selection starting");
-    err = zmk_split_peripheral_select_first_available_transport();
+    err = select_ble_transport();
     LOG_INF("BLE peripheral transport selection returned %d", err);
     if (err != -ENODEV && err) {
         LOG_ERR("BLE peripheral transport resume failed: %d", err);
@@ -116,10 +144,12 @@ static void mode_work_handler(struct k_work *work) {
         nemu_link_studio_release_all();
 #endif
         zmk_endpoint_clear_reports();
+#elif !IS_ENABLED(CONFIG_ZMK_SPLIT)
+        zmk_endpoint_clear_reports();
 #endif
         ble_suspended = true;
         LOG_INF("Stopping current peripheral transport");
-        err = zmk_split_peripheral_select_transport(NULL);
+        err = set_esb_transport_enabled(false);
         LOG_INF("Current peripheral transport stop returned %d", err);
         if (err) {
             LOG_ERR("BLE peripheral transport stop failed: %d", err);
@@ -132,17 +162,23 @@ static void mode_work_handler(struct k_work *work) {
         LOG_INF("BLE disable returned %d", err);
         if (err) {
             LOG_ERR("BLE disable failed: %d", err);
-            resume_ble();
+            if (boot_esb_pending) {
+                LOG_ERR("Keeping BLE advertising suppressed after BOOT_ESB failure");
+            } else {
+                resume_ble();
+            }
             goto done;
         }
 #endif
         LOG_INF("Selecting ESB peripheral transport");
-        err = zmk_split_peripheral_select_transport(zmk_nemu_link_peripheral_transport());
+        err = set_esb_transport_enabled(true);
         LOG_INF("ESB peripheral transport selection returned %d", err);
         if (err) {
             LOG_ERR("ESB peripheral transport start failed: %d", err);
 #if IS_ENABLED(CONFIG_ZMK_BLE)
-            if (resume_ble()) {
+            if (boot_esb_pending) {
+                LOG_ERR("Keeping BLE disabled after BOOT_ESB failure");
+            } else if (resume_ble()) {
                 LOG_ERR("BLE recovery failed after ESB start failure");
             }
 #endif
@@ -155,7 +191,7 @@ static void mode_work_handler(struct k_work *work) {
     } else {
         LOG_INF("Stopping ESB peripheral transport");
         /* set_enabled(false) stops the runtime ESB radio and drops its TX queue. */
-        err = zmk_split_peripheral_select_transport(NULL);
+        err = set_esb_transport_enabled(false);
         if (err) {
             LOG_ERR("ESB peripheral transport stop failed: %d", err);
             goto done;
@@ -177,6 +213,9 @@ done:
     k_mutex_lock(&mode_lock, K_FOREVER);
     mode_pending = false;
     k_mutex_unlock(&mode_lock);
+    if (!target || !err) {
+        boot_esb_pending = false;
+    }
     nemu_link_notify_mode_changed(zmk_nemu_link_owns_radio(), err);
 }
 K_WORK_DELAYABLE_DEFINE(mode_work, mode_work_handler);

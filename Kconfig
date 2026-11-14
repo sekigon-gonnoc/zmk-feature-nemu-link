@@ -536,6 +536,15 @@ config ZMK_NEMU_LINK_STUDIO_SOURCE
     range 0 1
     default 1
 
+config ZMK_NEMU_LINK_MIC_SOURCE
+    int "ESB source ID of the Nemu-link microphone"
+    depends on BOARD_NEMU_LINK_DONGLE && ZMK_NEMU_LINK
+    range 0 1
+    default ZMK_NEMU_LINK_STUDIO_SOURCE
+    help
+      Select the source carrying Nemu-link microphone audio and remote PTT
+      control. This can differ from the source used for ZMK Studio traffic.
+
 config ZMK_NEMU_LINK_AUTO_BLE
     bool "Return to BLE when dongle application ACKs stop"
     depends on ZMK_NEMU_LINK_MODE_SWITCH

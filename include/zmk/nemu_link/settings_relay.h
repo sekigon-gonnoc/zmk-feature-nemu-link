@@ -17,7 +17,7 @@ int nemu_link_settings_relay_dispatch(const struct dynamic_setting_remote_reques
 int nemu_link_settings_ble_relay_call(const struct dynamic_setting_remote_request *request,
                                       struct dynamic_setting_remote_response *response);
 
-/* ESB owner-only relay. The link adapter sends authenticated Studio frames to target_source. */
+/* Owner-only ESB relay using Studio REMOTE_REQUEST/RESPONSE packets. */
 int nemu_link_settings_esb_relay_call(const struct dynamic_setting_remote_request *request,
                                       struct dynamic_setting_remote_response *response);
 int nemu_link_settings_esb_receive_request(const struct nemu_link_studio_packet *packet,

@@ -101,22 +101,6 @@ static atomic_t receiver_ready;
 void zmk_nemu_link_set_receiver_ready(bool ready) { atomic_set(&receiver_ready, ready); }
 #endif
 static uint16_t tx_id;
-#if IS_ENABLED(CONFIG_ZMK_DYNAMIC_SETTINGS) && IS_ENABLED(CONFIG_ZMK_NEMU_LINK_STUDIO_PROTOCOL)
-#define SETTINGS_FRAGMENT_TX_TIMEOUT_MS 4000
-static atomic_t settings_tx_wait_id;
-static atomic_t settings_tx_status;
-static atomic_t settings_tx_done_id;
-K_SEM_DEFINE(settings_tx_done, 0, 1);
-#if IS_ENABLED(CONFIG_BOARD_NEMU_LINK_DONGLE)
-static struct {
-    bool pending;
-    uint8_t source;
-    uint16_t msg_id;
-    struct nemu_link_studio_packet packet;
-    struct nemu_link_studio_route route;
-} settings_request_tx;
-#endif
-#endif
 #define SERVICE_MS 10
 
 #if IS_ENABLED(CONFIG_BOARD_NEMU_LINK_DONGLE)
@@ -458,8 +442,7 @@ int zmk_nemu_link_register_audio_callbacks(const struct zmk_nemu_link_audio_call
     return 0;
 }
 
-static int send_frame_internal(uint8_t source, uint8_t *bytes, size_t size, bool wait_for_tx,
-                               uint16_t *wait_id) {
+static int send_frame_internal(uint8_t source, uint8_t *bytes, size_t size) {
     if (!size || size > NEMU_LINK_FRAME_MAX_SIZE) {
         return -EINVAL;
     }
@@ -468,8 +451,8 @@ static int send_frame_internal(uint8_t source, uint8_t *bytes, size_t size, bool
                              .len = size,
                              .msg_id = 0,
                              .max_retry = 0,
-                             .replaceable = CENTRAL && !wait_for_tx &&
-                                            wire_kind(bytes, size) == NEMU_LINK_WIRE_ACK};
+                             .replaceable =
+                                 CENTRAL && wire_kind(bytes, size) == NEMU_LINK_WIRE_ACK};
     /* Live audio is obsolete as soon as its playout deadline passes. Avoid
      * replaying stale fragments ahead of current input and Studio traffic. */
     if (wire_kind(bytes, size) != NEMU_LINK_WIRE_AUDIO) {
@@ -480,25 +463,12 @@ static int send_frame_internal(uint8_t source, uint8_t *bytes, size_t size, bool
         ++tx_id;
     }
     packet.msg_id = tx_id;
-#if IS_ENABLED(CONFIG_ZMK_DYNAMIC_SETTINGS) && IS_ENABLED(CONFIG_ZMK_NEMU_LINK_STUDIO_PROTOCOL)
-    if (wait_for_tx) {
-        k_sem_reset(&settings_tx_done);
-        atomic_set(&settings_tx_status, 0);
-        atomic_set(&settings_tx_done_id, 0);
-        atomic_set(&settings_tx_wait_id, tx_id);
-    }
-#else
-    ARG_UNUSED(wait_for_tx);
-#endif
 #if IS_ENABLED(CONFIG_ZMK_NEMU_LINK_IDLE)
     atomic_inc(&tx_pending);
 #endif
     nemu_link_trace_mark(NEMU_LINK_TRACE_QUEUE_BEGIN,
                          (uint16_t)((wire_kind(bytes, size) << 8) | size));
     int err = nemu_link_radio_send(&packet);
-    if (!err && wait_for_tx && wait_id) {
-        *wait_id = packet.msg_id;
-    }
     nemu_link_trace_mark(NEMU_LINK_TRACE_QUEUE_END, (uint16_t)-err);
 #if IS_ENABLED(CONFIG_ZMK_NEMU_LINK_IDLE)
     if (err) {
@@ -506,13 +476,16 @@ static int send_frame_internal(uint8_t source, uint8_t *bytes, size_t size, bool
     }
 #endif
     irq_unlock(key);
+#if CONFIG_ZMK_NEMU_LINK_CCM_RADIO
+    /* Secure wrapping reserves a CCM staging job before the radio queue is
+     * touched. A rejected enqueue cannot produce a TX completion, so release
+     * that job here instead of waiting for the completion callback. */
+    if (err) {
+        nemu_link_ccm_radio_retire(source, bytes, size);
+    }
+#endif
     if (err) {
         tx_errors++;
-#if IS_ENABLED(CONFIG_ZMK_DYNAMIC_SETTINGS) && IS_ENABLED(CONFIG_ZMK_NEMU_LINK_STUDIO_PROTOCOL)
-        if (wait_for_tx && atomic_get(&settings_tx_wait_id) == packet.msg_id) {
-            atomic_set(&settings_tx_wait_id, 0);
-        }
-#endif
     }
 #if IS_ENABLED(CONFIG_ZMK_NEMU_LINK_RADIO_DIAGNOSTIC)
     uint8_t kind = wire_kind(bytes, size);
@@ -532,34 +505,8 @@ static int send_frame_internal(uint8_t source, uint8_t *bytes, size_t size, bool
 }
 
 int send_frame(uint8_t source, uint8_t *bytes, size_t size) {
-    return send_frame_internal(source, bytes, size, false, NULL);
+    return send_frame_internal(source, bytes, size);
 }
-
-#if IS_ENABLED(CONFIG_ZMK_DYNAMIC_SETTINGS) && IS_ENABLED(CONFIG_ZMK_NEMU_LINK_STUDIO_PROTOCOL)
-static int wait_for_tx(uint16_t wait_id) {
-    if (!wait_id) {
-        return -EINVAL;
-    }
-    if (k_sem_take(&settings_tx_done, K_MSEC(SETTINGS_FRAGMENT_TX_TIMEOUT_MS))) {
-        bool completed =
-            atomic_get(&settings_tx_done_id) == wait_id && atomic_get(&settings_tx_status) != 0;
-        if (!completed) {
-            return -ETIMEDOUT;
-        }
-    }
-    return atomic_get(&settings_tx_done_id) == wait_id && atomic_get(&settings_tx_status) == 1
-               ? 0
-               : -EIO;
-}
-
-#if !IS_ENABLED(CONFIG_BOARD_NEMU_LINK_DONGLE)
-static int send_frame_and_wait(uint8_t source, uint8_t *bytes, size_t size) {
-    uint16_t wait_id = 0;
-    int err = send_frame_internal(source, bytes, size, true, &wait_id);
-    return err ? err : wait_for_tx(wait_id);
-}
-#endif
-#endif
 
 int zmk_nemu_link_audio_send(uint16_t block_sequence, uint8_t fragment, uint8_t fragment_count,
                              const uint8_t *pcm, size_t size) {
@@ -613,7 +560,7 @@ audio_out:
 
 int zmk_nemu_link_audio_control(bool mic_enabled, uint8_t origin) {
 #if IS_ENABLED(CONFIG_BOARD_NEMU_LINK_DONGLE) && IS_ENABLED(CONFIG_ZMK_NEMU_LINK_STUDIO_PROTOCOL)
-    uint8_t source = CONFIG_ZMK_NEMU_LINK_STUDIO_SOURCE;
+    uint8_t source = CONFIG_ZMK_NEMU_LINK_MIC_SOURCE;
     uint8_t native[NEMU_LINK_NATIVE_AUDIO_CONTROL_SIZE] = {0};
     memcpy(native, "EsAc", 4);
     native[4] = source;
@@ -780,16 +727,6 @@ int nemu_link_native_send(app_esb_data_t *packet) {
 /* Called in ESB IRQ context. Copy bounded frames only; process on system work
  * queue alongside timeout and keymap/coordinator work. Never run ZMK here. */
 void nemu_link_radio_event(app_esb_event_t *event) {
-#if IS_ENABLED(CONFIG_ZMK_DYNAMIC_SETTINGS) && IS_ENABLED(CONFIG_ZMK_NEMU_LINK_STUDIO_PROTOCOL)
-    if (event->evt_type == APP_ESB_EVT_TX_SUCCESS || event->evt_type == APP_ESB_EVT_TX_FAIL) {
-        if (atomic_get(&settings_tx_wait_id) == event->msg_id) {
-            atomic_set(&settings_tx_status, event->evt_type == APP_ESB_EVT_TX_SUCCESS ? 1 : 2);
-            atomic_set(&settings_tx_done_id, event->msg_id);
-            atomic_set(&settings_tx_wait_id, 0);
-            k_sem_give(&settings_tx_done);
-        }
-    }
-#endif
 #if IS_ENABLED(CONFIG_ZMK_NEMU_LINK_IDLE)
     if (event->evt_type == APP_ESB_EVT_TX_SUCCESS || event->evt_type == APP_ESB_EVT_TX_FAIL) {
         if (atomic_get(&tx_pending) > 0) {
@@ -1578,7 +1515,8 @@ static void process_rx_frame(struct rx_frame *frame) {
 #if IS_ENABLED(CONFIG_ZMK_DYNAMIC_SETTINGS) && IS_ENABLED(CONFIG_ZMK_NEMU_LINK_STUDIO_PROTOCOL)
         if (frame->pipe < NEMU_LINK_LINK_SOURCES && frame->size >= 9 &&
             frame->bytes[6] == NEMU_LINK_STUDIO_FRAME_TAG &&
-            frame->bytes[8] == NEMU_LINK_STUDIO_OWNER_RPC_RESPONSE) {
+            (frame->bytes[8] == NEMU_LINK_STUDIO_REMOTE_RESPONSE ||
+             frame->bytes[8] == NEMU_LINK_STUDIO_OWNER_SCHEMA_HASH)) {
             struct nemu_link_studio_route route;
             struct nemu_link_studio_packet packet;
             bool route_ok = nemu_link_studio_route_central_source(&route, &central, &hop,
@@ -1605,23 +1543,26 @@ static void process_rx_frame(struct rx_frame *frame) {
         }
 #endif
 #else
+#if IS_ENABLED(CONFIG_ZMK_DYNAMIC_SETTINGS) && IS_ENABLED(CONFIG_ZMK_NEMU_LINK_STUDIO_PROTOCOL)
+        bool owner_remote_request = frame->size >= 34 &&
+                                    frame->bytes[6] == NEMU_LINK_STUDIO_FRAME_TAG &&
+                                    frame->bytes[8] == NEMU_LINK_STUDIO_REMOTE_REQUEST &&
+                                    frame->bytes[33] == DYNAMIC_SETTING_SCOPE_OWNER;
+#else
+        bool owner_remote_request = false;
+#endif
 #if IS_ENABLED(CONFIG_ZMK_NEMU_LINK_STUDIO_SYNC)
-        /* The dongle's shared-settings Studio packets (base, request, and
-         * response) use the same authenticated link envelope as owner RPC.
-         * Forward them into the Studio coordinator on the keyboard side so
-         * its shared-state checks and response path can run. Owner RPC has a
-         * separate relay and must remain on that path below. */
+        /* Owner-scoped remote requests are handled by the protocol-only relay
+         * below. Shared requests continue through the Studio coordinator. */
         if (frame->pipe == CONFIG_ZMK_NEMU_LINK_PERIPHERAL_ID && frame->size >= 9 &&
-            frame->bytes[6] == NEMU_LINK_STUDIO_FRAME_TAG &&
-            frame->bytes[8] != NEMU_LINK_STUDIO_OWNER_RPC_REQUEST &&
+            frame->bytes[6] == NEMU_LINK_STUDIO_FRAME_TAG && !owner_remote_request &&
             nemu_link_link_input_allowed(CONFIG_ZMK_NEMU_LINK_PERIPHERAL_ID)) {
             nemu_link_studio_receive(frame->bytes, frame->size, frame->received_ms);
         }
 #endif
 #if IS_ENABLED(CONFIG_ZMK_DYNAMIC_SETTINGS) && IS_ENABLED(CONFIG_ZMK_NEMU_LINK_STUDIO_PROTOCOL)
         if (frame->pipe == CONFIG_ZMK_NEMU_LINK_PERIPHERAL_ID && frame->size >= 9 &&
-            frame->bytes[6] == NEMU_LINK_STUDIO_FRAME_TAG &&
-            frame->bytes[8] == NEMU_LINK_STUDIO_OWNER_RPC_REQUEST) {
+            frame->bytes[6] == NEMU_LINK_STUDIO_FRAME_TAG && owner_remote_request) {
             struct nemu_link_studio_route route;
             struct nemu_link_studio_packet packet;
             bool route_ok = nemu_link_studio_route_peripheral_source(
@@ -1637,7 +1578,7 @@ static void process_rx_frame(struct rx_frame *frame) {
                                                       frame->size, FRAME_CRC)) {
                 nemu_link_settings_esb_note_link_rx_drop(false,
                                                          NEMU_LINK_SETTINGS_ESB_RX_DROP_DECODE);
-            } else if (packet.kind == NEMU_LINK_STUDIO_OWNER_RPC_REQUEST) {
+            } else if (packet.kind == NEMU_LINK_STUDIO_REMOTE_REQUEST) {
                 (void)nemu_link_settings_esb_receive_request(&packet, &route);
             }
         }
@@ -2267,7 +2208,8 @@ out:
 #if IS_ENABLED(CONFIG_ZMK_DYNAMIC_SETTINGS) && IS_ENABLED(CONFIG_ZMK_NEMU_LINK_STUDIO_PROTOCOL)
 int nemu_link_link_settings_esb_send(const struct nemu_link_studio_packet *packet, uint8_t source) {
 #if IS_ENABLED(CONFIG_BOARD_NEMU_LINK_DONGLE)
-    if (!packet || !nemu_link_studio_packet_valid(packet)) {
+    if (!packet || packet->kind != NEMU_LINK_STUDIO_REMOTE_REQUEST ||
+        !nemu_link_studio_packet_valid(packet)) {
         return -EINVAL;
     }
     k_mutex_lock(&link_lock, K_FOREVER);
@@ -2290,31 +2232,6 @@ int nemu_link_link_settings_esb_send(const struct nemu_link_studio_packet *packe
 #if IS_ENABLED(CONFIG_ZMK_NEMU_LINK_MULTI_DONGLE)
     route.dongle_id = selected_dongle;
 #endif
-    bool owner_request = packet->kind == NEMU_LINK_STUDIO_OWNER_RPC_REQUEST;
-    if (owner_request && settings_request_tx.pending) {
-        bool same_packet = settings_request_tx.source == source &&
-                           settings_request_tx.packet.transaction == packet->transaction &&
-                           settings_request_tx.packet.offset == packet->offset &&
-                           settings_request_tx.packet.length == packet->length &&
-                           settings_request_tx.packet.kind == packet->kind &&
-                           !memcmp(settings_request_tx.packet.data, packet->data, packet->length) &&
-                           nemu_link_studio_route_same_session(&route, &settings_request_tx.route);
-        uint16_t pending_id = settings_request_tx.msg_id;
-        k_mutex_unlock(&link_lock);
-        int wait_err = wait_for_tx(pending_id);
-        if (wait_err == -ETIMEDOUT) {
-            return same_packet ? wait_err : -EBUSY;
-        }
-        k_mutex_lock(&link_lock, K_FOREVER);
-        if (settings_request_tx.pending && settings_request_tx.msg_id == pending_id) {
-            settings_request_tx.pending = false;
-        }
-        k_mutex_unlock(&link_lock);
-        if (!same_packet) {
-            return nemu_link_link_settings_esb_send(packet, source);
-        }
-        return wait_err;
-    }
     size_t size = nemu_link_studio_frame_encode(bytes, sizeof(bytes), &route, packet, FRAME_CRC);
     if (!size) {
         err = -EINVAL;
@@ -2322,30 +2239,10 @@ int nemu_link_link_settings_esb_send(const struct nemu_link_studio_packet *packe
     }
     err = nemu_link_secure_wrap(secure_peer(source), CENTRAL, source, bytes, size, encrypted,
                                 &encrypted_size);
-    uint16_t wait_id = 0;
     if (!err) {
-        /* Enqueue against the route selected under link_lock, then release the
-         * lock before waiting so link service can process hop and ACK state. */
-        err = send_frame_internal(source, encrypted, encrypted_size, true, &wait_id);
-        if (!err && owner_request) {
-            settings_request_tx.pending = true;
-            settings_request_tx.source = source;
-            settings_request_tx.msg_id = wait_id;
-            settings_request_tx.packet = *packet;
-            settings_request_tx.route = route;
-        }
+        err = send_frame(source, encrypted, encrypted_size);
     }
     k_mutex_unlock(&link_lock);
-    if (!err) {
-        err = wait_for_tx(wait_id);
-        if (err != -ETIMEDOUT && owner_request) {
-            k_mutex_lock(&link_lock, K_FOREVER);
-            if (settings_request_tx.pending && settings_request_tx.msg_id == wait_id) {
-                settings_request_tx.pending = false;
-            }
-            k_mutex_unlock(&link_lock);
-        }
-    }
     return err;
 out:
     k_mutex_unlock(&link_lock);
@@ -2363,7 +2260,8 @@ int nemu_link_link_settings_esb_reply(const struct nemu_link_studio_route *route
     if (!route || !packet || route->local_side != NEMU_LINK_STUDIO_KEYBOARD ||
         route->source != CONFIG_ZMK_NEMU_LINK_PERIPHERAL_ID ||
         !nemu_link_studio_packet_valid(packet) ||
-        packet->kind != NEMU_LINK_STUDIO_OWNER_RPC_RESPONSE) {
+        (packet->kind != NEMU_LINK_STUDIO_REMOTE_RESPONSE &&
+         packet->kind != NEMU_LINK_STUDIO_OWNER_SCHEMA_HASH)) {
         return -EINVAL;
     }
     k_mutex_lock(&link_lock, K_FOREVER);
@@ -2396,17 +2294,7 @@ int nemu_link_link_settings_esb_reply(const struct nemu_link_studio_route *route
 reply_out:
     k_mutex_unlock(&link_lock);
     if (!err) {
-        uint64_t deadline = k_uptime_get() + 5000;
-        do {
-            err = send_frame_and_wait(current.source, encrypted, encrypted_size);
-            if (err != -EBUSY && err != -EAGAIN && err != -ENOMSG) {
-                break;
-            }
-            if (k_uptime_get() >= deadline) {
-                break;
-            }
-            k_sleep(K_MSEC(5));
-        } while (true);
+        err = send_frame(current.source, encrypted, encrypted_size);
     }
     return err;
 #else

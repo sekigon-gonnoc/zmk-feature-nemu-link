@@ -11,3 +11,4 @@ void nemu_link_mode_requested(bool esb);
 int nemu_link_mode_command(uint32_t mode);
 int nemu_link_recover_ble(void);
 bool nemu_link_peripheral_transport_active(void);
+int nemu_link_peripheral_transport_set_enabled(bool enabled);

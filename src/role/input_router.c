@@ -1,5 +1,7 @@
 /* Registered after activity, before behavior listeners in the app target. */
 #include <errno.h>
+#include <stddef.h>
+#include <string.h>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/input/input.h>
@@ -47,9 +49,13 @@ static int route_input(const zmk_event_t *eh) {
          * Other endpoint choices send the encoder event to the dongle. */
         if (sensor && zmk_endpoint_get_selected().transport != ZMK_TRANSPORT_USB) {
             if (sensor->channel_data_size == 1) {
+                struct sensor_value value;
+                const uint8_t *channel_data =
+                    (const uint8_t *)sensor + offsetof(struct zmk_sensor_event, channel_data);
+                memcpy(&value, channel_data + offsetof(struct zmk_sensor_channel_data, value),
+                       sizeof(value));
                 int err = zmk_nemu_link_sensor_event(sensor->sensor_index,
-                                                     sensor->channel_data[0].channel,
-                                                     &sensor->channel_data[0].value);
+                                                     sensor->channel_data[0].channel, &value);
                 if (err && err != -ENOTCONN) {
                     LOG_WRN("sensor report failed index=%u err=%d", sensor->sensor_index, err);
                 }
